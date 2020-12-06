@@ -3,7 +3,7 @@ Simple CRUD REST API on Flask, using MySQL database and Docker.
 
 ### Getting started
 
-The only thing you need to install is ***Docker***.
+The things you need to install are ***Docker*** and ***Docker Compose***.
 
 ### Run the project
 
