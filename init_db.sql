@@ -23,3 +23,12 @@ CREATE TABLE list_notes (
     FOREIGN KEY (note_id) REFERENCES user_notes(id),
     PRIMARY KEY (user_id, note_id)
 );
+
+CREATE TABLE admins (
+    id INT AUTO_INCREMENT NOT NULL,
+    public_id INT NOT NULL,
+    name VARCHAR(50) NOT NULL,
+    password VARCHAR(50) NOT NULL,
+    admin BOOLEAN,
+    PRIMARY KEY(id)
+);
