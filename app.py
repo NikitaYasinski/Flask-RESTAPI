@@ -34,6 +34,8 @@ def manage_users():
             for k, v in zip(keys, user1[i]):
                 result[k] = v
             data[f'user {i + 1}'] = result
+        if data == {}:
+            return json.dumps({'message': 'there are no users'})
         return json.dumps(data, indent=4)
     
     if request.method == 'POST':
@@ -61,6 +63,8 @@ def manage_user(id):
             for k, v in zip(keys, user1[i]):
                 result[k] = v
             data[f'user {i + 1}'] = result
+        if data == {}:
+            return json.dumps({'message': f'there is no user with id={id}'})
         return json.dumps(data, indent=4)
     
     if request.method == 'DELETE':
@@ -86,19 +90,22 @@ def manage_notes(user_id):
         conn = mysql.connect()
         cur = conn.cursor()
         cur.execute(f'''
-        SELECT user_list.id, user_list.name, user_notes.id, user_notes.title, user_notes.content FROM user_list 
-        INNER JOIN user_notes ON user_list.id = user_notes.user_id 
+        SELECT user_list.name, user_notes.title, user_notes.content FROM user_list 
+        INNER JOIN list_notes ON user_list.id=list_notes.user_id
+        INNER JOIN user_notes ON list_notes.note_id=user_notes.id
         WHERE user_list.id={user_id}
         ''')
         user2 = cur.fetchall()
     
         data = {}
-        keys = ('user_id', 'user_name', 'note_id', 'title', 'content')
+        keys = ('user_name', 'title', 'content')
         for i in range(len(user2)):
             result = {}
             for k, v in zip(keys, user2[i]):
                 result[k] = v
             data[f'note {i + 1}'] = result
+        if data == {}:
+            return json.dumps({'message': 'there are no notes'})    
         return json.dumps(data, indent=4)
 
     if request.method == 'POST':
@@ -107,7 +114,10 @@ def manage_notes(user_id):
         note_title = request.json['title']
         note_content = request.json['content']
         cur.execute(f'''
-        INSERT INTO user_notes(title, content, user_id) VALUES ('{note_title}', '{note_content}', '{user_id}')
+        INSERT INTO user_notes(title, content) VALUES ('{note_title}', '{note_content}')
+        ''')
+        cur.execute(f'''
+        INSERT INTO list_notes(user_id) VALUES ('{user_id}')
         ''')
         conn.commit()
         return json.dumps({'message': 'success'})
@@ -119,25 +129,29 @@ def manage_note(user_id, note_id):
         conn = mysql.connect()
         cur = conn.cursor()
         cur.execute(f'''
-        SELECT user_list.id, user_list.name, user_notes.id, user_notes.title, user_notes.content FROM user_list 
-        INNER JOIN user_notes ON user_list.id = user_notes.user_id 
-        WHERE user_list.id={user_id} AND user_notes.id={note_id}
+        SELECT user_list.name, user_notes.title, user_notes.content FROM user_list 
+        INNER JOIN list_notes ON user_list.id=list_notes.user_id
+        INNER JOIN user_notes ON list_notes.note_id=user_notes.id
+        WHERE user_list.id={user_id} AND user_notes_id={note_id}
         ''')
         user3 = cur.fetchall()
     
         data = {}
-        keys = ('user_id', 'user_name', 'note_id', 'title', 'content')
+        keys = ('user_name', 'title', 'content')
         for i in range(len(user3)):
             result = {}
             for k, v in zip(keys, user3[i]):
                 result[k] = v
             data[f'note {i + 1}'] = result
+        if data == {}:
+            return json.dumps({'message': 'error'})
         return json.dumps(data, indent=4)
     
     if request.method == 'DELETE':
         conn = mysql.connect()
         cur = conn.cursor()
-        cur.execute(f"DELETE FROM user_notes WHERE id={note_id} AND user_id={user_id}")
+        cur.execute(f"DELETE FROM list_notes WHERE user_id={user_id} AND note_id={note_id}")
+        cur.execute(f"DELETE FROM user_notes WHERE id={note_id}")
         conn.commit()
         return json.dumps({'message': 'success'})
 
@@ -147,7 +161,7 @@ def manage_note(user_id, note_id):
         note_title = request.json['title']
         note_content = request.json['content']
         cur.execute(f'''
-        UPDATE user_notes SET title='{note_title}', content='{note_content}' WHERE id={note_id} AND user_id={user_id}
+        UPDATE user_notes SET title='{note_title}', content='{note_content}' WHERE id={note_id}
         ''')
         conn.commit()
         return json.dumps({'message': 'success'})

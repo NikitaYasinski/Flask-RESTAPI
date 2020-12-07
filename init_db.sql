@@ -13,7 +13,13 @@ CREATE TABLE user_notes (
     id INT AUTO_INCREMENT NOT NULL,
     title VARCHAR(20) NOT NULL,
     content VARCHAR(100) NOT NULL,
-    user_id INT, 
-    PRIMARY KEY(id),
-    FOREIGN KEY (user_id) REFERENCES user_list (id)
+    PRIMARY KEY(id)
+);
+
+CREATE TABLE list_notes (
+    user_id INT NOT NULL, 
+    note_id INT NOT NULL AUTO_INCREMENT,
+    FOREIGN KEY (user_id) REFERENCES user_list(id),
+    FOREIGN KEY (note_id) REFERENCES user_notes(id),
+    PRIMARY KEY (user_id, note_id)
 );
