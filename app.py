@@ -1,237 +1,263 @@
 from flask import Flask, jsonify, request, make_response
-import json
-from flaskext.mysql import MySQL
 import os
 from dotenv import load_dotenv
 from flask_cors import CORS
-from werkzeug.security import generate_password_hash, check_password_hash
-from functools import wraps
-import jwt
+from flask_sqlalchemy import SQLAlchemy
 import uuid
 import datetime
-
-project_folder = os.path.expanduser('~/app')  # adjust as appropriate
-load_dotenv(os.path.join(project_folder, '.env'))
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+from flask_jwt_extended import (
+    JWTManager,
+    jwt_required,
+    create_access_token,
+    jwt_refresh_token_required,
+    create_refresh_token,
+    get_jwt_identity,
+)
 
 app = Flask(__name__)
 CORS(app)
-mysql = MySQL()
-
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY') 
-# MySQL configurations
-app.config['MYSQL_DATABASE_USER'] = os.getenv('DB_USER')
-app.config['MYSQL_DATABASE_PASSWORD'] = os.getenv('DB_PASSWORD')
-app.config['MYSQL_DATABASE_DB'] = os.getenv('DB_NAME')
-app.config['MYSQL_DATABASE_HOST'] = os.getenv('DB_HOST')
-mysql.init_app(app)
-
-def token_required(f):
-    @wraps(f)
-    def decorator(*args, **kwargs):
-        token = None
-
-        if 'x-access-tokens' in request.headers:
-            token = request.headers['x-access-tokens']
-
-        if not token:
-            return json.dumps({'message': 'a valid token is missing'})
-
-        try:
-            data = jwt.decode(token, app.config['SECRET_KEY'])
-            conn = mysql.connect()
-            cur = conn.cursor()
-            cur.execute(f"SELECT * FROM admins WHERE public_id={data['public_id']} LIMIT 1")
-            current_user = cur.fetchall()
-        except:
-            return jsonify({'message': 'token is invalid'})
-
-        return f(current_user, *args, **kwargs)
-    return decorator
-
-@app.route('/register', methods=['GET', 'POST'])
-def signup_user():  
-    data = request.get_json()  
-
-    hashed_password = generate_password_hash(data['password'], method='sha256')
-    
-    conn = mysql.connect()
-    cur = conn.cursor()
-    cur.execute(f'''
-    INSERT INTO admins(public_id, name, password, admin) VALUES ({str(uuid.uuid4())}, '{data['name']}', '{hashed_password}', FALSE)
-    ''')
-    conn.commit()    
-
-    return jsonify({'message': 'registered successfully'})
-
-@app.route('/login', methods=['GET', 'POST'])  
-def login_user(): 
- 
-    auth = request.authorization   
-
-    if not auth or not auth.username or not auth.password:  
-        return make_response('could not verify', 401, {'WWW.Authentication': 'Basic realm: "login required"'})    
-  
-    conn = mysql.connect()
-    cur = conn.cursor()
-    cur.execute(f"SELECT * FROM admins WHERE name='{auth.username}' LIMIT 1")
-    user = cur.fetchall()
-     
-    if check_password_hash(user[3], auth.password):  
-        token = jwt.encode({'public_id': user[1], 'exp' : datetime.datetime.utcnow() + datetime.timedelta(minutes=30)}, app.config['SECRET_KEY'])  
-        return jsonify({'token' : token.decode('UTF-8')}) 
-
-    return make_response('could not verify',  401, {'WWW.Authentication': 'Basic realm: "login required"'})
-
-@app.route('/users', methods=['GET', 'POST'])
-@token_required
-def manage_users():
-    
-    if request.method == 'GET':
-        conn = mysql.connect()
-        cur = conn.cursor()
-        cur.execute(f"SELECT * FROM user_list")
-        user1 = cur.fetchall()
-        data = {}
-        keys = ['id', 'name', 'city']
-        for i in range(len(user1)):
-            result = {}
-            for k, v in zip(keys, user1[i]):
-                result[k] = v
-            data[f'user {i + 1}'] = result
-        if data == {}:
-            return json.dumps({'message': 'there are no users'})
-        return json.dumps(data, indent=4)
-    
-    if request.method == 'POST':
-        conn = mysql.connect()
-        cur = conn.cursor()
-        user_name = request.json['name']
-        user_city = request.json['city']
-        cur.execute(f"INSERT INTO user_list(name, city) VALUES ('{user_name}', '{user_city}')")
-        conn.commit()
-        return json.dumps({'message': 'success'})
 
 
-@app.route('/users/<int:id>', methods=['GET', 'PUT', 'DELETE'])
-@token_required
-def manage_user(id):
-    
-    if request.method == 'GET':
-        conn = mysql.connect()
-        cur = conn.cursor()
-        cur.execute(f"SELECT * FROM user_list WHERE id={id}")
-        user1 = cur.fetchall()
-        data = {}
-        keys = ['id', 'name', 'city']
-        for i in range(len(user1)):
-            result = {}
-            for k, v in zip(keys, user1[i]):
-                result[k] = v
-            data[f'user {i + 1}'] = result
-        if data == {}:
-            return json.dumps({'message': f'there is no user with id={id}'})
-        return json.dumps(data, indent=4)
-    
-    if request.method == 'DELETE':
-        conn = mysql.connect()
-        cur = conn.cursor()
-        cur.execute(f"DELETE FROM user_list WHERE id={id}")
-        conn.commit()
-        return json.dumps({'message': 'success'})
+app.config["JWT_SECRET_KEY"] = "potatoes"
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = datetime.timedelta(minutes=20)
+app.config["JWT_REFRESH_TOKEN_EXPIRES"] = datetime.timedelta(days=60)
 
-    if request.method == 'PUT':
-        conn = mysql.connect()
-        cur = conn.cursor()
-        user_name = request.json['name']
-        user_city = request.json['city']
-        cur.execute(f"UPDATE user_list SET name='{user_name}', city='{user_city}' WHERE id={id}")
-        conn.commit()
-        return json.dumps({'message': 'success'})
+app.config["SQLALCHEMY_DATABASE_URI"] = "mysql+pymysql://{}:{}@{}/{}".format(
+    os.getenv("DB_USER"),
+    os.getenv("DB_PASSWORD"),
+    os.getenv("DB_HOST"),
+    os.getenv("DB_NAME"),
+)
 
-@app.route('/users/<int:user_id>/notes', methods=['GET', 'POST'])
-@token_required
-def manage_notes(user_id):
-    
-    if request.method == 'GET':
-        conn = mysql.connect()
-        cur = conn.cursor()
-        cur.execute(f'''
-        SELECT user_list.name, user_notes.title, user_notes.content FROM user_list 
-        INNER JOIN list_notes ON user_list.id=list_notes.user_id
-        INNER JOIN user_notes ON list_notes.note_id=user_notes.id
-        WHERE user_list.id={user_id}
-        ''')
-        user2 = cur.fetchall()
-    
-        data = {}
-        keys = ('user_name', 'title', 'content')
-        for i in range(len(user2)):
-            result = {}
-            for k, v in zip(keys, user2[i]):
-                result[k] = v
-            data[f'note {i + 1}'] = result
-        if data == {}:
-            return json.dumps({'message': 'there are no notes'})    
-        return json.dumps(data, indent=4)
+db = SQLAlchemy(app)
+jwt = JWTManager(app)
 
-    if request.method == 'POST':
-        conn = mysql.connect()
-        cur = conn.cursor()
-        note_title = request.json['title']
-        note_content = request.json['content']
-        cur.execute(f'''
-        INSERT INTO user_notes(title, content) VALUES ('{note_title}', '{note_content}')
-        ''')
-        cur.execute(f'''
-        INSERT INTO list_notes(user_id) VALUES ('{user_id}')
-        ''')
-        conn.commit()
-        return json.dumps({'message': 'success'})
 
-@app.route('/users/<int:user_id>/notes/<int:note_id>', methods=['GET', 'PUT', 'DELETE'])
-@token_required
-def manage_note(user_id, note_id):
-    
-    if request.method == 'GET':
-        conn = mysql.connect()
-        cur = conn.cursor()
-        cur.execute(f'''
-        SELECT user_list.name, user_notes.title, user_notes.content FROM user_list 
-        INNER JOIN list_notes ON user_list.id=list_notes.user_id
-        INNER JOIN user_notes ON list_notes.note_id=user_notes.id
-        WHERE user_list.id={user_id} AND user_notes_id={note_id}
-        ''')
-        user3 = cur.fetchall()
-    
-        data = {}
-        keys = ('user_name', 'title', 'content')
-        for i in range(len(user3)):
-            result = {}
-            for k, v in zip(keys, user3[i]):
-                result[k] = v
-            data[f'note {i + 1}'] = result
-        if data == {}:
-            return json.dumps({'message': 'error'})
-        return json.dumps(data, indent=4)
-    
-    if request.method == 'DELETE':
-        conn = mysql.connect()
-        cur = conn.cursor()
-        cur.execute(f"DELETE FROM list_notes WHERE user_id={user_id} AND note_id={note_id}")
-        cur.execute(f"DELETE FROM user_notes WHERE id={note_id}")
-        conn.commit()
-        return json.dumps({'message': 'success'})
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    public_id = db.Column(db.String(50), unique=True)
+    name = db.Column(db.String(50), unique=True)
+    password = db.Column(db.String(80))
 
-    if request.method == 'PUT':
-        conn = mysql.connect()
-        cur = conn.cursor()
-        note_title = request.json['title']
-        note_content = request.json['content']
-        cur.execute(f'''
-        UPDATE user_notes SET title='{note_title}', content='{note_content}' WHERE id={note_id}
-        ''')
-        conn.commit()
-        return json.dumps({'message': 'success'})
+
+class Note(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    text = db.Column(db.String(50))
+    checked = db.Column(db.Boolean)
+    user_name = db.Column(db.String(50))
+
+
+# def token_required(f):
+#   @wraps(f)
+#  def decorated(*args, **kwargs):
+#     token = None
+#
+#       if "x-access-token" in request.headers:
+#          token = request.headers["x-access-token"]
+#
+#       if not token:
+#          return jsonify({"message": "Token is missing!"}), 401
+#
+#       try:
+#          data = jwt.decode(token, app.config["SECRET_KEY"])
+#         current_user = User.query.filter_by(public_id=data["public_id"]).first()
+#    except:
+#       return jsonify({"message": "Token is invalid!"}), 401
+#
+#       return f(current_user, *args, **kwargs)
+#
+#   return decorated
+
+
+@app.route("/register")
+def create_user():
+    data = request.get_json()
+
+    hashed_password = generate_password_hash(data["password"], method="sha256")
+
+    new_user = User(
+        public_id=str(uuid.uuid4()), name=data["name"], password=hashed_password
+    )
+    db.session.add(new_user)
+    db.session.commit()
+
+    return jsonify({"message": "New user created!"})
+
+
+@app.route("/login")
+def login():
+    auth = request.authorization
+
+    if not auth or not auth.username or not auth.password:
+        return make_response(
+            "Could not verify",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Login required!"'},
+        )
+
+    user = User.query.filter_by(name=auth.username).first()
+
+    if not user:
+        return make_response(
+            "Could not verify",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Login required!"'},
+        )
+
+    if check_password_hash(user.password, auth.password):
+        ret = {
+            "access_token": create_access_token(identity=user.name),
+            "refresh_token": create_refresh_token(identity=user.name),
+        }
+
+        return jsonify(ret)
+
+    return make_response(
+        "Could not verify", 401, {"WWW-Authenticate": 'Basic realm="Login required!"'}
+    )
+
+
+@app.route("/refresh", methods=["POST"])
+@jwt_refresh_token_required
+def refresh():
+    current_user = get_jwt_identity()
+    ret = {
+        "access_token": create_access_token(identity=current_user),
+        "refresh_token": create_refresh_token(identity=current_user),
+    }
+    return jsonify(ret), 200
+
+
+@app.before_request
+def create_db():
+    db.create_all()
+
+
+@app.route("/user", methods=["GET"])
+@jwt_required
+def get_all_users():
+
+    users = User.query.all()
+
+    output = []
+    for user in users:
+        user_data = {}
+        user_data["id"] = user.id
+        user_data["public_id"] = user.public_id
+        user_data["name"] = user.name
+        user_data["password"] = user.password
+        output.append(user_data)
+
+    return jsonify({"users": output})
+
+
+@app.route("/user/<public_id>", methods=["GET"])
+@jwt_required
+def get_one_user(public_id):
+
+    user = User.query.filter_by(public_id=public_id).first()
+
+    if not user:
+        return jsonify({"message": "No user found!"})
+
+    user_data = {}
+    user_data["id"] = user.id
+    user_data["public_id"] = user.public_id
+    user_data["name"] = user.name
+    user_data["password"] = user.password
+
+    return jsonify({"user": user_data})
+
+
+@app.route("/user/<public_id>", methods=["DELETE"])
+@jwt_required
+def delete_user(public_id):
+
+    user = User.query.filter_by(public_id=public_id).first()
+
+    if not user:
+        return jsonify({"message": "No user found!"})
+
+    db.session.delete(user)
+    db.session.commit()
+
+    return jsonify({"message": "User deleted!"})
+
+
+@app.route("/note", methods=["GET"])
+@jwt_required
+def get_all_notes():
+    notes = Note.query.filter_by(user_name=get_jwt_identity()).all()
+
+    output = []
+
+    for note in notes:
+        note_data = {}
+        note_data["id"] = note.id
+        note_data["text"] = note.text
+        note_data["checked"] = note.checked
+        output.append(note_data)
+
+    return jsonify({"notes": output})
+
+
+@app.route("/note/<note_id>", methods=["GET"])
+@jwt_required
+def get_one_note(note_id):
+    note = Note.query.filter_by(id=note_id, user_name=get_jwt_identity()).first()
+
+    if not note:
+        return jsonify({"message": "No note found!"})
+
+    note_data = {}
+    note_data["id"] = note.id
+    note_data["text"] = note.text
+    note_data["checked"] = note.checked
+
+    return jsonify(note_data)
+
+
+@app.route("/note", methods=["POST"])
+@jwt_required
+def create_note():
+    data = request.get_json()
+
+    new_note = Note(text=data["text"], checked=False, user_name=get_jwt_identity())
+    db.session.add(new_note)
+    db.session.commit()
+
+    return jsonify({"message": "Note created!"})
+
+
+@app.route("/note/<note_id>", methods=["PUT"])
+@jwt_required
+def complete_note(note_id):
+    note = Note.query.filter_by(id=note_id, user_name=get_jwt_identity()).first()
+
+    if not note:
+        return jsonify({"message": "No note found!"})
+
+    note.checked = True
+    db.session.commit()
+
+    return jsonify({"message": "Note has been checked!"})
+
+
+@app.route("/note/<note_id>", methods=["DELETE"])
+@jwt_required
+def delete_note(note_id):
+    note = Note.query.filter_by(id=note_id, user_name=get_jwt_identity()).first()
+
+    if not note:
+        return jsonify({"message": "No note found!"})
+
+    db.session.delete(note)
+    db.session.commit()
+
+    return jsonify({"message": "Note deleted!"})
+
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True, host='0.0.0.0')

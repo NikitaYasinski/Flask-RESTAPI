@@ -1,5 +1,6 @@
 flask
 python-dotenv
-flask-cors
-flask-mysql
-pyjwt
+flask-jwt-extended
+flask_cors
+flask_sqlalchemy
+pymysql
