@@ -1,14 +1,11 @@
-from flask import Flask, jsonify, request, make_response
-import os
-from dotenv import load_dotenv
-from flask_cors import CORS
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, jsonify, request, make_response, Blueprint
 import uuid
-import datetime
+from app import db
+from app import jwt
+from app.mod_auth.models import User, Note, Permission
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 from flask_jwt_extended import (
-    JWTManager,
     jwt_required,
     create_access_token,
     jwt_refresh_token_required,
@@ -16,52 +13,9 @@ from flask_jwt_extended import (
     get_jwt_identity,
 )
 
-app = Flask(__name__)
-CORS(app)
+mod_auth = Blueprint('auth', __name__)
 
-
-app.config["JWT_SECRET_KEY"] = "potatoes"
-app.config["JWT_ACCESS_TOKEN_EXPIRES"] = datetime.timedelta(minutes=20)
-app.config["JWT_REFRESH_TOKEN_EXPIRES"] = datetime.timedelta(days=60)
-
-app.config["SQLALCHEMY_DATABASE_URI"] = "mysql+pymysql://{}:{}@{}/{}".format(
-    os.getenv("DB_USER"),
-    os.getenv("DB_PASSWORD"),
-    os.getenv("DB_HOST"),
-    os.getenv("DB_NAME"),
-)
-
-db = SQLAlchemy(app)
-jwt = JWTManager(app)
-
-
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    public_id = db.Column(db.String(50), unique=True)
-    name = db.Column(db.String(50), unique=True)
-    password = db.Column(db.String(80))
-
-
-class Note(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    text = db.Column(db.String(50))
-    checked = db.Column(db.Boolean)
-    user_id = db.Column(db.Integer)
-
-class Permission(db.Model):
-    user_from = db.Column(db.Integer, primary_key=True, autoincrement=False)
-    user_to = db.Column(db.Integer, primary_key=True, autoincrement=False)
-    get_perm = db.Column(db.Boolean)
-    post_perm = db.Column(db.Boolean)
-    put_perm = db.Column(db.Boolean)
-    delete_perm = db.Column(db.Boolean)
-
-def permission(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        
-
-@app.route("/user/<int:user_from>/note/perm/<int:user_to>")
+@mod_auth.route("/user/<int:user_from>/note/perm/<int:user_to>")
 @jwt_required
 def create_perm(user_from, user_to):
     if user_from == get_jwt_identity(): 
@@ -79,7 +33,7 @@ def create_perm(user_from, user_to):
         return jsonify({"message": "Permission denied!"})
 
 
-@app.route("/register", )
+@mod_auth.route("/register", )
 def create_user():
     data = request.get_json()
 
@@ -94,7 +48,7 @@ def create_user():
     return jsonify({"message": "New user created!"})
 
 
-@app.route("/login")
+@mod_auth.route("/login")
 def login():
     auth = request.authorization
 
@@ -127,7 +81,7 @@ def login():
     )
 
 
-@app.route("/refresh", methods=["POST"])
+@mod_auth.route("/refresh", methods=["POST"])
 @jwt_refresh_token_required
 def refresh():
     current_user = get_jwt_identity()
@@ -138,12 +92,7 @@ def refresh():
     return jsonify(ret), 200
 
 
-@app.before_request
-def create_db():
-    db.create_all()
-
-
-@app.route("/user", methods=["GET"])
+@mod_auth.route("/user", methods=["GET"])
 @jwt_required
 def get_all_users():
 
@@ -161,7 +110,7 @@ def get_all_users():
     return jsonify({"users": output})
 
 
-@app.route("/user/<int:user_id>", methods=["GET"])
+@mod_auth.route("/user/<int:user_id>", methods=["GET"])
 @jwt_required
 def get_one_user(user_id):
 
@@ -179,7 +128,7 @@ def get_one_user(user_id):
     return jsonify({"user": user_data, "iden": get_jwt_identity()})
 
 
-@app.route("/user/<int:user_id>", methods=["DELETE"])
+@mod_auth.route("/user/<int:user_id>", methods=["DELETE"])
 @jwt_required
 def delete_user(user_id):
 
@@ -194,7 +143,7 @@ def delete_user(user_id):
     return jsonify({"message": "User deleted!"})
 
 
-@app.route("/user/<int:user_id>/note", methods=["GET"])
+@mod_auth.route("/user/<int:user_id>/note", methods=["GET"])
 @jwt_required
 def get_all_notes(user_id):
     
@@ -204,7 +153,7 @@ def get_all_notes(user_id):
         if user_id != get_jwt_identity():
             return jsonify({"message": "Permission denied!"})
 
-    if perm.get_perm is True or user_id == get_jwt_identity():
+    if user_id == get_jwt_identity() or perm.get_perm is True:
 
         notes = Note.query.filter_by(user_id=user_id).all()
 
@@ -222,7 +171,7 @@ def get_all_notes(user_id):
         return jsonify({"message": "Permission denied!"})
 
 
-@app.route("/user/<int:user_id>/note/<note_id>", methods=["GET"])
+@mod_auth.route("/user/<int:user_id>/note/<note_id>", methods=["GET"])
 @jwt_required
 def get_one_note(user_id, note_id):
     perm = Permission.query.filter_by(user_from=user_id, user_to=get_jwt_identity()).first()
@@ -231,7 +180,7 @@ def get_one_note(user_id, note_id):
         if user_id != get_jwt_identity():
             return jsonify({"message": "Permission denied!"})
     
-    if perm.get_perm is True or user_id == get_jwt_identity():
+    if user_id == get_jwt_identity() or perm.get_perm is True:
 
         note = Note.query.filter_by(id=note_id, user_id=user_id).first()
 
@@ -248,7 +197,7 @@ def get_one_note(user_id, note_id):
         return jsonify({"message": "Permission denied!"})
 
 
-@app.route("/user/<int:user_id>/note", methods=["POST"])
+@mod_auth.route("/user/<int:user_id>/note", methods=["POST"])
 @jwt_required
 def create_note(user_id):
     data = request.get_json()
@@ -259,7 +208,7 @@ def create_note(user_id):
         if user_id != get_jwt_identity():
             return jsonify({"message": "Permission denied!"})
 
-    if perm.post_perm is True or user_id == get_jwt_identity():
+    if user_id == get_jwt_identity() or perm.post_perm is True :
 
         new_note = Note(text=data["text"], checked=False, user_id=user_id)
         db.session.add(new_note)
@@ -270,7 +219,7 @@ def create_note(user_id):
     return jsonify({"message": "Note created!"})
 
 
-@app.route("/user/<int:user_id>/note/<note_id>", methods=["PUT"])
+@mod_auth.route("/user/<int:user_id>/note/<note_id>", methods=["PUT"])
 @jwt_required
 def complete_note(user_id, note_id):
     perm = Permission.query.filter_by(user_from=user_id, user_to=get_jwt_identity()).first()
@@ -279,7 +228,7 @@ def complete_note(user_id, note_id):
         if user_id != get_jwt_identity():
             return jsonify({"message": "Permission denied!"})
 
-    if perm.put_perm is True or user_id == get_jwt_identity():
+    if user_id == get_jwt_identity() or perm.put_perm is True:
         note = Note.query.filter_by(id=note_id, user_id=user_id).first()
 
         if not note:
@@ -293,7 +242,7 @@ def complete_note(user_id, note_id):
     return jsonify({"message": "Note has been checked!"})
 
 
-@app.route("/user/<int:user_id>/note/<note_id>", methods=["DELETE"])
+@mod_auth.route("/user/<int:user_id>/note/<note_id>", methods=["DELETE"])
 @jwt_required
 def delete_note(user_id, note_id):
     perm = Permission.query.filter_by(user_from=user_id, user_to=get_jwt_identity()).first()
@@ -302,7 +251,7 @@ def delete_note(user_id, note_id):
         if user_id != get_jwt_identity():
             return jsonify({"message": "Permission denied!"})
 
-    if perm.put_perm is True or user_id == get_jwt_identity():
+    if user_id == get_jwt_identity() or perm.put_perm is True:
         note = Note.query.filter_by(id=note_id, user_id=user_id).first()
 
         if not note:
@@ -315,7 +264,3 @@ def delete_note(user_id, note_id):
 
 
     return jsonify({"message": "Note deleted!"})
-
-
-if __name__ == "__main__":
-    app.run(port=5000, debug=True, host='0.0.0.0')
