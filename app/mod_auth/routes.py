@@ -251,7 +251,7 @@ def delete_note(user_id, note_id):
         if user_id != get_jwt_identity():
             return jsonify({"message": "Permission denied!"})
 
-    if user_id == get_jwt_identity() or perm.put_perm is True:
+    if user_id == get_jwt_identity() or perm.delete_perm is True:
         note = Note.query.filter_by(id=note_id, user_id=user_id).first()
 
         if not note:
